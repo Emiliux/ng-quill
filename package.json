@@ -15,7 +15,7 @@
     "karma-jasmine": "5.1.0",
     "karma-mocha-reporter": "2.2.5",
     "local-web-server": "5.4.0",
-    "dash-quill": "file:../quill",
+    "dash-quill": "1.3.8",
     "rimraf": "6.0.1",
     "uglify-js": "3.19.3"
   },
@@ -25,7 +25,7 @@
   "peerDependencies": {
     "angular": "1.8.3",
     "angular-sanitize": "1.8.3",
-    "dash-quill": "file:../quill"
+    "dash-quill": "1.3.8"
   },
   "scripts": {
     "build": "rimraf dist && mkdir dist && cp src/ng-quill.js dist/ && cat dist/ng-quill.js | uglifyjs > dist/ng-quill.min.js && echo \";\" >> dist/ng-quill.js",
@@ -34,10 +34,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/KillerCodeMonkey/ngQuill"
+    "url": "https://github.com/Emiliux/ng-quill"
   },
   "bugs": {
-    "url": "https://github.com/KillerCodeMonkey/ngQuill/issues"
+    "url": "https://github.com/Emiliux/ng-quill/issues"
   },
   "keywords": [
     "editor",
