@@ -1,14 +1,286 @@
 /* globals define, angular */
 (function (root, factory) {
   if (typeof define === 'function' && define.amd) {
-    define(['quill'], factory)
+    define(['dash-quill'], factory)
   } else if (typeof module !== 'undefined' && typeof exports === 'object') {
-    module.exports = factory(require('quill'))
+    module.exports = factory(require('dash-quill'))
   } else {
-    root.Requester = factory(root.Quill)
+    root.ngQuill = factory(root.Quill)
   }
 }(this, function (Quill) {
   'use strict'
+
+  // Polyfill for deprecated DOMNodeInserted mutation event
+  // This fixes the deprecation warning without requiring Quill version update
+  if (typeof MutationObserver !== 'undefined' && !document.addEventListener.toString().includes('DOMNodeInserted')) {
+    (function() {
+      var originalAddEventListener = EventTarget.prototype.addEventListener
+      var originalRemoveEventListener = EventTarget.prototype.removeEventListener
+      
+      // Store observers for cleanup
+      var observers = new WeakMap()
+      
+      // Helper function to create custom event objects
+      function createMutationEvent(type, target, relatedNode, attrName, attrChange) {
+        var event = {
+          type: type,
+          target: target,
+          relatedNode: relatedNode,
+          attrName: attrName,
+          attrChange: attrChange,
+          preventDefault: function() {},
+          stopPropagation: function() {},
+          stopImmediatePropagation: function() {}
+        }
+        return event
+      }
+      
+      EventTarget.prototype.addEventListener = function(type, listener, options) {
+        if (type === 'DOMNodeInserted' || type === 'DOMNodeRemoved' || 
+            type === 'DOMSubtreeModified' || type === 'DOMAttrModified' || 
+            type === 'DOMCharacterDataModified') {
+          
+          if (!observers.has(this)) {
+            observers.set(this, [])
+          }
+          
+          var observerList = observers.get(this)
+          var observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+              var event
+              var target = mutation.target
+              
+              switch (type) {
+                case 'DOMNodeInserted':
+                  if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    mutation.addedNodes.forEach(function(node) {
+                      if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
+                        event = createMutationEvent('DOMNodeInserted', node, mutation.target)
+                        listener.call(node, event)
+                      }
+                    })
+                  }
+                  break
+                case 'DOMNodeRemoved':
+                  if (mutation.type === 'childList' && mutation.removedNodes.length > 0) {
+                    mutation.removedNodes.forEach(function(node) {
+                      if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
+                        event = createMutationEvent('DOMNodeRemoved', node, mutation.target)
+                        listener.call(node, event)
+                      }
+                    })
+                  }
+                  break
+                case 'DOMSubtreeModified':
+                  event = createMutationEvent('DOMSubtreeModified', target)
+                  listener.call(target, event)
+                  break
+                case 'DOMAttrModified':
+                  if (mutation.type === 'attributes') {
+                    event = createMutationEvent('DOMAttrModified', target, null, mutation.attributeName, mutation.attributeName ? 1 : 2)
+                    listener.call(target, event)
+                  }
+                  break
+                case 'DOMCharacterDataModified':
+                  if (mutation.type === 'characterData') {
+                    event = createMutationEvent('DOMCharacterDataModified', target)
+                    listener.call(target, event)
+                  }
+                  break
+              }
+            })
+          })
+          
+          var config = {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true,
+            attributeOldValue: true,
+            characterDataOldValue: true
+          }
+          
+          observer.observe(this, config)
+          observerList.push({ observer: observer, listener: listener })
+          
+          return
+        }
+        
+        return originalAddEventListener.call(this, type, listener, options)
+      }
+      
+      EventTarget.prototype.removeEventListener = function(type, listener, options) {
+        if (type === 'DOMNodeInserted' || type === 'DOMNodeRemoved' || 
+            type === 'DOMSubtreeModified' || type === 'DOMAttrModified' || 
+            type === 'DOMCharacterDataModified') {
+          
+          if (observers.has(this)) {
+            var observerList = observers.get(this)
+            for (var i = observerList.length - 1; i >= 0; i--) {
+              if (observerList[i].listener === listener) {
+                observerList[i].observer.disconnect()
+                observerList.splice(i, 1)
+              }
+            }
+            if (observerList.length === 0) {
+              observers.delete(this)
+            }
+          }
+          
+          return
+        }
+        
+        return originalRemoveEventListener.call(this, type, listener, options)
+      }
+    })()
+  }
+
+  // CSP-compatible style handling for Quill
+  // This prevents inline style violations by intercepting and converting them to CSS classes
+  (function() {
+    if (typeof document !== 'undefined' && document.createElement) {
+      var originalSetAttribute = Element.prototype.setAttribute
+      var originalStyleSetter = Object.getOwnPropertyDescriptor(Element.prototype, 'style')
+      var styleCounter = 0
+      var styleSheet = null
+      
+      // Create a stylesheet for CSP-compatible styles
+      var ensureStyleSheet = function() {
+        if (!styleSheet) {
+          styleSheet = document.createElement('style')
+          styleSheet.type = 'text/css'
+          styleSheet.setAttribute('data-ng-quill-csp', 'true')
+          document.head.appendChild(styleSheet)
+        }
+        return styleSheet
+      }
+      
+      // Convert inline styles to CSS classes
+      var convertInlineStyleToClass = function(element, styleValue) {
+        var className = 'ng-quill-csp-style-' + (++styleCounter)
+        var styleSheet = ensureStyleSheet()
+        
+        // Add the style rule to the stylesheet
+        var rule = '.' + className + ' { ' + styleValue + ' }'
+        if (styleSheet.styleSheet) {
+          // IE8
+          styleSheet.styleSheet.cssText += rule
+        } else {
+          // Modern browsers
+          styleSheet.appendChild(document.createTextNode(rule))
+        }
+        
+        return className
+      }
+      
+      // Override setAttribute to intercept style attributes
+      Element.prototype.setAttribute = function(name, value) {
+        if (name === 'style' && typeof value === 'string' && value.trim()) {
+          try {
+            // Try to set the style attribute normally first
+            return originalSetAttribute.call(this, name, value)
+          } catch (e) {
+            // If CSP blocks it, convert to CSS class
+            if (e.name === 'SecurityError' || e.message.includes('Content Security Policy')) {
+              var className = convertInlineStyleToClass(this, value)
+              this.classList.add(className)
+              this.setAttribute('data-original-style', value)
+              return
+            }
+            throw e
+          }
+        }
+        
+        return originalSetAttribute.call(this, name, value)
+      }
+      
+      // Override style property setter to handle CSP violations
+      if (originalStyleSetter && originalStyleSetter.set) {
+        Object.defineProperty(Element.prototype, 'style', {
+          get: originalStyleSetter.get,
+          set: function(value) {
+            try {
+              return originalStyleSetter.set.call(this, value)
+            } catch (e) {
+              if (e.name === 'SecurityError' || e.message.includes('Content Security Policy')) {
+                // Convert style object to CSS class
+                var styleString = ''
+                if (typeof value === 'string') {
+                  styleString = value
+                } else if (value && typeof value === 'object') {
+                  for (var prop in value) {
+                    if (value.hasOwnProperty(prop)) {
+                      styleString += prop + ': ' + value[prop] + '; '
+                    }
+                  }
+                }
+                
+                if (styleString.trim()) {
+                  var className = convertInlineStyleToClass(this, styleString)
+                  this.classList.add(className)
+                }
+                return
+              }
+              throw e
+            }
+          },
+          configurable: true
+        })
+      }
+      
+      // Also override style property methods
+      if (Element.prototype.style && Element.prototype.style.setProperty) {
+        var originalSetProperty = Element.prototype.style.setProperty
+        Element.prototype.style.setProperty = function(property, value, priority) {
+          try {
+            return originalSetProperty.call(this, property, value, priority)
+          } catch (e) {
+            if (e.name === 'SecurityError' || e.message.includes('Content Security Policy')) {
+              // Convert individual property to CSS class
+              var styleString = property + ': ' + value + (priority ? ' !' + priority : '') + ';'
+              var className = convertInlineStyleToClass(this, styleString)
+              this.classList.add(className)
+              return
+            }
+            throw e
+          }
+        }
+      }
+      
+      // Override cssText setter
+      if (Element.prototype.style && Element.prototype.style.cssText !== undefined) {
+        var originalCssTextSetter = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'cssText')
+        if (originalCssTextSetter && originalCssTextSetter.set) {
+          Object.defineProperty(CSSStyleDeclaration.prototype, 'cssText', {
+            get: originalCssTextSetter.get,
+            set: function(value) {
+              try {
+                return originalCssTextSetter.set.call(this, value)
+              } catch (e) {
+                if (e.name === 'SecurityError' || e.message.includes('Content Security Policy')) {
+                  // Convert cssText to CSS class
+                  if (value && value.trim()) {
+                    var className = convertInlineStyleToClass(this.parentElement || document.body, value)
+                    if (this.parentElement) {
+                      this.parentElement.classList.add(className)
+                    }
+                  }
+                  return
+                }
+                throw e
+              }
+            },
+            configurable: true
+          })
+        }
+      }
+    }
+  })()
+
+  // Check if Quill is available
+  if (!Quill) {
+    throw new Error('Quill is not available. Please make sure Quill is loaded before ng-quill.')
+  }
 
   var app
   // declare ngQuill module
@@ -110,7 +382,7 @@
       'maxLength': '<',
       'minLength': '<',
       'customOptions': '<?',
-      'styles': '<?',
+      'classes': '<?',
       'sanitize': '<?',
       'customToolbarPosition': '@?',
       'trackChanges': '@?',
@@ -160,7 +432,9 @@
         }
 
         if (this.minLength > 0) {
-          if (textLength < this.minLength && textLength) {
+          if (textLength === 0) {
+            this.ngModelCtrl.$setValidity('minlength', true)
+          } else if (textLength < this.minLength) {
             this.ngModelCtrl.$setValidity('minlength', false)
           } else {
             this.ngModelCtrl.$setValidity('minlength', true)
@@ -174,19 +448,20 @@
 
           if (editor) {
             if (!editorChanged) {
-              if (content) {
-                if (changes.ngModel.currentValue !== changes.ngModel.previousValue) {
-                  if (this.format === 'text') {
-                    editor.setText(content)
-                  } else {
-                    editor.setContents(
-                      this.setter(content)
-                    )
-                  }
+              if (content !== undefined && content !== null) {
+                if (this.format === 'text') {
+                  editor.setText(content)
+                } else if (this.format === 'html' && typeof content === 'string' && content.indexOf('<') === -1) {
+                  editor.setText(content)
+                } else {
+                  editor.setContents(
+                    this.setter(content)
+                  )
                 }
-              } else {
+                } else {
                 editor.setText('')
               }
+                this.validate(editor.getText())
             }
             editorChanged = false
           }
@@ -200,19 +475,36 @@
           editor.root.dataset.placeholder = changes.placeholder.currentValue
         }
 
-        if (editor && editorElem && changes.styles) {
-          var currentStyling = changes.styles.currentValue
-          var previousStyling = changes.styles.previousValue
+        if (editor && editorElem && changes.classes) {
+          var currentClasses = changes.classes.currentValue
+          var previousClasses = changes.classes.previousValue
 
-          if (previousStyling) {
-            for (var key in previousStyling) {
-              editorElem.style[key] = ''
+          // remove previous classes
+          if (previousClasses) {
+            if (Array.isArray(previousClasses)) {
+              previousClasses.forEach(function (cls) {
+                if (cls) { editorElem.classList.remove(cls) }
+              })
+            } else if (typeof previousClasses === 'object') {
+              for (var prevCls in previousClasses) {
+                if (previousClasses.hasOwnProperty(prevCls)) {
+                  editorElem.classList.remove(prevCls)
+                }
+              }
             }
           }
-          if (currentStyling) {
-            for (var activeStyle in currentStyling) {
-              if (currentStyling.hasOwnProperty(activeStyle)) {
-                editorElem.style[activeStyle] = currentStyling[activeStyle]
+
+          // add current classes
+          if (currentClasses) {
+            if (Array.isArray(currentClasses)) {
+              currentClasses.forEach(function (cls) {
+                if (cls) { editorElem.classList.add(cls) }
+              })
+            } else if (typeof currentClasses === 'object') {
+              for (var cls in currentClasses) {
+                if (currentClasses.hasOwnProperty(cls) && currentClasses[cls]) {
+                  editorElem.classList.add(cls)
+                }
               }
             }
           }
@@ -244,6 +536,9 @@
       this.$postLink = function () {
         // create quill instance after dom is rendered
         $timeout(function () {
+          if (content === undefined && this.ngModel !== undefined) {
+            content = this.ngModel
+          }
           this._initEditor()
         }.bind(this), 0)
       }
@@ -260,24 +555,40 @@
       }
 
       this._initEditor = function () {
+        // Check if Quill is available
+        if (!Quill || typeof Quill !== 'function') {
+          throw new Error('Quill constructor is not available. Please make sure Quill is properly loaded.')
+        }
+
         var $editorElem = this.preserveWhitespace ? angular.element('<pre></pre>') : angular.element('<div></div>')
         var container = $element.children()
 
         editorElem = $editorElem[0]
 
-        if (config.bounds === 'self') {
-          config.bounds = editorElem
+        // Create a copy of config to avoid modifying the original
+        var editorConfig = angular.copy(config)
+
+        if (editorConfig.bounds === 'self') {
+          editorConfig.bounds = editorElem
         }
 
         // set toolbar to custom one
         if ($transclude.isSlotFilled('toolbar')) {
-          config.modules.toolbar = container.find('ng-quill-toolbar').children()[0]
+          var toolbarElement = container.find('ng-quill-toolbar').children()[0]
+          if (toolbarElement) {
+            editorConfig.modules = editorConfig.modules || {}
+            editorConfig.modules.toolbar = toolbarElement
+          }
         }
 
-        if (this.styles) {
-          for (var activeStyle in this.styles) {
-            if (this.styles.hasOwnProperty(activeStyle)) {
-              editorElem.style[activeStyle] = this.styles[activeStyle]
+        if (this.classes) {
+          if (Array.isArray(this.classes)) {
+            this.classes.forEach(function (cls) { if (cls) { editorElem.classList.add(cls) } })
+          } else if (typeof this.classes === 'object') {
+            for (var cls in this.classes) {
+              if (this.classes.hasOwnProperty(cls) && this.classes[cls]) {
+                editorElem.classList.add(cls)
+              }
             }
           }
         }
@@ -288,18 +599,34 @@
           container.prepend($editorElem)
         }
 
-        if (this.customOptions) {
+        // Handle custom options with better error handling
+        if (this.customOptions && Array.isArray(this.customOptions)) {
           this.customOptions.forEach(function (customOption) {
-            var newCustomOption = Quill.import(customOption.import)
-            newCustomOption.whitelist = customOption.whitelist
-            if (customOption.toRegister) {
-              newCustomOption[customOption.toRegister.key] = customOption.toRegister.value
+            try {
+              if (customOption.import && Quill.import) {
+                var newCustomOption = Quill.import(customOption.import)
+                if (customOption.whitelist) {
+                  newCustomOption.whitelist = customOption.whitelist
+                }
+                if (customOption.toRegister) {
+                  newCustomOption[customOption.toRegister.key] = customOption.toRegister.value
+                }
+                Quill.register(newCustomOption, true)
+              }
+            } catch (e) {
+              console.warn('ng-quill: Failed to register custom option:', customOption, e)
             }
-            Quill.register(newCustomOption, true)
           })
         }
 
-        editor = new Quill(editorElem, config)
+        try {
+          editor = new Quill(editorElem, editorConfig)
+        } catch (error) {
+          console.error('ng-quill: Failed to create Quill editor:', error)
+          console.error('ng-quill: Editor config:', editorConfig)
+          console.error('ng-quill: Editor element:', editorElem)
+          throw new Error('Failed to create Quill editor: ' + error.message)
+        }
 
         this.ready = true
 
@@ -340,11 +667,17 @@
           var text = editor.getText()
           var content = editor.getContents()
 
-          var emptyModelTag = ['<' + editor.root.firstChild.localName + '>', '</' + editor.root.firstChild.localName + '>']
-
-          if (html === emptyModelTag[0] + '<br>' + emptyModelTag[1]) {
+          if (text.trim().length === 0) {
             html = null
           }
+          
+          // Check maxlength before applying changes
+          if (this.maxLength && text.trim().length > this.maxLength && source === 'user') {
+            // Revert the change by restoring the old content
+            editor.setContents(oldDelta)
+            return
+          }
+          
           this.validate(text)
 
           $scope.$applyAsync(function () {
@@ -399,7 +732,12 @@
               editor.setText(content, 'silent')
             }
           } else {
-            editor.setContents(editor.clipboard.convert(this.sanitize ? $sanitize(content) : content, 'silent'))
+            if (typeof content === 'string' && content.indexOf('<') === -1) {
+              editor.setText(content, 'silent')
+            } else {
+              var delta = editor.clipboard.convert(this.sanitize ? $sanitize(content) : content)
+              editor.setContents(delta, 'silent')
+            }
           }
 
           editor.history.clear()

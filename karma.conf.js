@@ -7,7 +7,7 @@ module.exports = function (config) {
       'node_modules/angular/angular.js',
       'node_modules/angular-mocks/angular-mocks.js',
       'node_modules/angular-sanitize/angular-sanitize.js',
-      'node_modules/quill/dist/quill.js',
+      'node_modules/dash-quill/dist/quill.js',
 
       './src/ng-quill.js',
 
@@ -22,7 +22,7 @@ module.exports = function (config) {
 
     reporters: ['mocha', 'coverage'],
 
-    browsers: ['PhantomJS'],
+    browsers: ['ChromeHeadless'],
     singleRun: true,
     coverageReporter: {
       reporters: [{
