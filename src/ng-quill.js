@@ -73,7 +73,7 @@
       if (customConf.scrollingContainer) {
         config.scrollingContainer = customConf.scrollingContainer
       }
-      if (customConf.debug || customConf.debug === false) {
+      if (customConf.debug || customConf.debug === false) {
         config.debug = customConf.debug
       }
       if (customConf.trackChanges && ['all', 'user'].indexOf(customConf.trackChanges) > -1) {
